@@ -11,7 +11,13 @@ TAR_FILE="nvim-linux-x86_64.tar.gz"
 CHECKSUM_FILE="shasum.txt"
 
 # Get latest release tag from GitHub
-LATEST_VERSION=$(curl -s "https://api.github.com/repos/$REPO/releases/tags/nightly" | jq -r .body | sed -n '2{s/^[^v]*v\(.*\)/\1/p}')
+LATEST_VERSION=$(curl -s "https://api.github.com/repos/$REPO/releases/tags/nightly" | jq -r .body | sed -n 's/.*\bv\([0-9.]*\).*/\1/p')
+
+# Validate extracted version
+if [[ ! "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Invalid version retrieved: $LATEST_VERSION"
+  exit 1
+fi
 
 # Get installed version
 INSTALLED_VERSION=$($INSTALL_DIR/bin/nvim --version | head -n1 | awk '{print $2}' | sed 's/^v//')
@@ -25,25 +31,23 @@ fi
 echo "Updating Neovim from $INSTALLED_VERSION to $LATEST_VERSION..."
 
 # Download latest release
-echo "Creating tmp directories"
-TMP_DIR="/tmp/$PKG_NAME $LATEST_VERSION"
+TMP_DIR="/tmp/${PKG_NAME}_${LATEST_VERSION}"
 DEB_DIR="$TMP_DIR/nvim-linux-x86_64"
 mkdir -p "$TMP_DIR"
 cd "$TMP_DIR"
 sudo curl -LO "https://github.com/$REPO/releases/download/nightly/$TAR_FILE"
 sudo curl -LO "https://github.com/$REPO/releases/download/nightly/$CHECKSUM_FILE"
 
-# Remove all lines from the checksum file that doesn't contain the TAR_FILE file name
-grep "$TAR_FILE" "$CHECKSUM_FILE" >"$CHECKSUM_FILE.filtered"
+# prevent checksun mismatch
+grep "$TAR_FILE" "$CHECKSUM_FILE" > "$CHECKSUM_FILE.filtered"
 mv "$CHECKSUM_FILE.filtered" "$CHECKSUM_FILE"
 
-# Verify checksum
 sha256sum -c "$CHECKSUM_FILE" || {
   echo "Checksum verification failed!"
   exit 1
 }
 
-# Extract and configure directories
+# local config
 tar xzf "$TAR_FILE"
 cd "nvim-linux-x86_64"
 sudo mkdir -p "$DEB_DIR/DEBIAN" "$DEB_DIR/usr/local"
@@ -51,7 +55,7 @@ sudo mv "bin" "usr/local"
 sudo mv "lib" "usr/local"
 sudo mv "share" "usr/local"
 
-sudo cat <<EOF >"$DEB_DIR/DEBIAN/control"
+sudo cat <<EOF > "$DEB_DIR/DEBIAN/control"
 Package: $PKG_NAME
 Version: $LATEST_VERSION
 Section: editors
@@ -64,13 +68,12 @@ EOF
 
 dpkg-deb --build "$DEB_DIR"
 
-# Remove current package
-sudo apt remove neovim
-
-# Install the package
+# verify versions
+sudo apt remove -y neovim
 sudo dpkg -i "$DEB_DIR.deb"
 
-echo "Removing tmp files"
+echo "Removing temporary files"
 sudo rm -rf "$TMP_DIR"
 
 echo "Neovim $LATEST_VERSION installed successfully."
+
